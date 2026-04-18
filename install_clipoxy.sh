@@ -1,102 +1,111 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "========================================="
-echo "   CLIProxyAPIPlus 一键交互式安装脚本"
-echo "   (Debian 11 低内存优化版)"
+echo "   CLIProxyAPIPlus 完整管理工具 v2.1"
+echo "   1. 安装 / 重新安装"
+echo "   2. 修改域名"
+echo "   3. 完全卸载"
 echo "========================================="
 
-# 输入域名
-read -p "请输入要使用的域名 (默认: cpa.studyzy.eu.org): " DOMAIN
-DOMAIN=${DOMAIN:-cpa.studyzy.eu.org}
+read -p "请选择操作 (1/2/3): " CHOICE
 
-echo "即将使用的域名: $DOMAIN"
-read -p "确认正确吗？(y/n): " CONFIRM
-if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-    echo "安装已取消"
-    exit 1
-fi
+PROJECT_DIR="$HOME/ai-infra/CLIProxyAPIPlus"
 
-# 1. 清理残留
-echo "[1/8] 清理旧残留..."
-systemctl --user stop cliproxyapi 2>/dev/null || true
-systemctl --user disable cliproxyapi 2>/dev/null || true
-rm -f ~/.config/systemd/user/cliproxyapi.service
-rm -rf ~/ai-infra/CLIProxyAPIPlus
-sudo rm -f /etc/nginx/sites-enabled/reverse-proxy
-sudo rm -f /etc/nginx/sites-available/reverse-proxy
-sudo certbot delete --cert-name "$DOMAIN" --non-interactive 2>/dev/null || true
+cleanup_full() {
+    echo "🗑️  彻底清理所有文件和数据..."
+    systemctl --user stop cliproxyapi 2>/dev/null || true
+    systemctl --user disable cliproxyapi 2>/dev/null || true
+    rm -f ~/.config/systemd/user/cliproxyapi.service
+    rm -rf "$PROJECT_DIR"
+    sudo rm -f /etc/nginx/sites-enabled/reverse-proxy
+    sudo rm -f /etc/nginx/sites-available/reverse-proxy
+    sudo certbot delete --cert-name "*" --non-interactive 2>/dev/null || true
+    sudo systemctl restart nginx 2>/dev/null || true
+}
 
-# 2. 系统更新与工具
-echo "[2/8] 安装必要工具..."
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl git wget build-essential ca-certificates upx nginx certbot python3-certbot-nginx
+cleanup_keep_data() {
+    echo "🛡️  卸载服务，但保留用户数据..."
+    systemctl --user stop cliproxyapi 2>/dev/null || true
+    systemctl --user disable cliproxyapi 2>/dev/null || true
+    rm -f ~/.config/systemd/user/cliproxyapi.service
+    sudo rm -f /etc/nginx/sites-enabled/reverse-proxy
+    sudo rm -f /etc/nginx/sites-available/reverse-proxy
+    sudo certbot delete --cert-name "*" --non-interactive 2>/dev/null || true
+    sudo systemctl restart nginx 2>/dev/null || true
+}
 
-# 3. 安装 Go
-echo "[3/8] 安装 Go 1.24..."
-cd /tmp
-wget -q https://go.dev/dl/go1.24.1.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf go1.24.1.linux-amd64.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee -a /root/.bashrc > /dev/null
-echo 'export GOPATH=/root/go' >> /root/.bashrc
-echo 'export PATH=$PATH:$GOPATH/bin' >> /root/.bashrc
-source /root/.bashrc
-go version
+# ====================== 1. 安装 / 重新安装 ======================
+if [ "$CHOICE" = "1" ]; then
+    echo "[安装 / 重新安装]"
 
-# 4. 编译项目
-echo "[4/8] 编译 CLIProxyAPIPlus..."
-mkdir -p ~/ai-infra && cd ~/ai-infra
-git clone https://github.com/router-for-me/CLIProxyAPIPlus.git
-cd CLIProxyAPIPlus
+    if [ -f "$PROJECT_DIR/config.yaml" ]; then
+        echo "🔍 检测到旧数据"
+        echo "1) 纯净安装（删除所有旧数据）"
+        echo "2) 保留数据（复用之前的 config.yaml）"
+        read -p "请选择 (1/2): " INSTALL_MODE
+    else
+        INSTALL_MODE=1
+    fi
 
-go build -trimpath -ldflags "-s -w" -o cliproxyapi ./cmd/server
-upx --best --lzma cliproxyapi 2>/dev/null || true
-chmod +x cliproxyapi
+    read -p "请输入域名 (默认: cpa.studyzy.eu.org): " DOMAIN
+    DOMAIN=${DOMAIN:-cpa.studyzy.eu.org}
 
-# 5. 配置 config.yaml（自动打开编辑）
-echo "[5/8] 配置 config.yaml ..."
+    read -p "确认继续？(y/n): " CONFIRM
+    [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && exit 1
 
-if [ -f "config.example.yaml" ]; then
-    cp -f config.example.yaml config.yaml
-    echo "已复制官方配置模板"
-else
-    cat > config.yaml << MINI
-server:
-  host: "0.0.0.0"
-  port: 8317
-debug: true
-MINI
-fi
+    [ "$INSTALL_MODE" = "1" ] && cleanup_full || cleanup_keep_data
 
-# 确保端口正确
-sed -i '/^server:/,/^[^ ]/d' config.yaml 2>/dev/null || true
-cat >> config.yaml << EOF
+    echo "[1/8] 安装必要工具..."
+    sudo apt update && sudo apt install -y curl git wget build-essential ca-certificates upx nginx certbot python3-certbot-nginx
 
-# ==================== 脚本强制设置 ====================
+    echo "[2/8] 安装 Go 1.24..."
+    cd /tmp
+    wget -q https://go.dev/dl/go1.24.1.linux-amd64.tar.gz
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf go1.24.1.linux-amd64.tar.gz
+    echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee -a /root/.bashrc > /dev/null
+    echo 'export GOPATH=/root/go' >> /root/.bashrc
+    echo 'export PATH=$PATH:$GOPATH/bin' >> /root/.bashrc
+    source /root/.bashrc
+
+    echo "[3/8] 下载/更新项目..."
+    mkdir -p ~/ai-infra && cd ~/ai-infra
+    if [ -d "CLIProxyAPIPlus" ] && [ "$INSTALL_MODE" = "2" ]; then
+        cd CLIProxyAPIPlus && git pull
+    else
+        rm -rf CLIProxyAPIPlus
+        git clone https://github.com/router-for-me/CLIProxyAPIPlus.git
+        cd CLIProxyAPIPlus
+    fi
+
+    go build -trimpath -ldflags "-s -w" -o cliproxyapi ./cmd/server
+    upx --best --lzma cliproxyapi 2>/dev/null || true
+    chmod +x cliproxyapi
+
+    echo "[4/8] 处理 config.yaml..."
+    if [ "$INSTALL_MODE" = "2" ] && [ -f "config.yaml" ]; then
+        echo "保留之前的 config.yaml"
+    else
+        cp -f config.example.yaml config.yaml 2>/dev/null || true
+    fi
+
+    sed -i '/^server:/,/^[^ ]/d' config.yaml 2>/dev/null || true
+    cat >> config.yaml << EOF
+
 server:
   host: "0.0.0.0"
   port: 8317
 debug: true
 EOF
 
-echo "--------------------------------------------------"
-echo "即将打开 nano 编辑 config.yaml"
-echo "你可以在这里添加 OAuth、API Keys、管理面板密码等设置"
-echo "编辑完成后：Ctrl+O 保存 → Enter → Ctrl+X 退出"
-echo "--------------------------------------------------"
+    echo "即将打开 config.yaml 编辑（可配置 OAuth 等）"
+    read -p "按 Enter 打开 nano..."
+    nano config.yaml
 
-read -p "按 Enter 键打开编辑器..."
-
-nano config.yaml
-
-echo "配置编辑完成，继续安装..."
-
-# 6. 创建 systemd 服务
-echo "[6/8] 创建 systemd 服务..."
-mkdir -p ~/.config/systemd/user
-
-cat > ~/.config/systemd/user/cliproxyapi.service << 'EOL'
+    echo "[5/8] 创建 systemd 服务..."
+    mkdir -p ~/.config/systemd/user
+    cat > ~/.config/systemd/user/cliproxyapi.service << 'EOL'
 [Unit]
 Description=CLIProxyAPIPlus Service (Port 8317)
 After=network.target
@@ -119,12 +128,11 @@ LimitNOFILE=1024
 WantedBy=default.target
 EOL
 
-systemctl --user daemon-reload
-systemctl --user enable --now cliproxyapi
+    systemctl --user daemon-reload
+    systemctl --user enable --now cliproxyapi
 
-# 7. 配置 Nginx
-echo "[7/8] 配置 Nginx..."
-sudo tee /etc/nginx/sites-available/reverse-proxy > /dev/null << EOF
+    echo "[6/8] 配置 Nginx..."
+    sudo tee /etc/nginx/sites-available/reverse-proxy > /dev/null << EOF
 server {
     listen 80;
     server_name $DOMAIN;
@@ -146,29 +154,42 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-
         proxy_read_timeout 600;
         proxy_send_timeout 600;
         proxy_buffering off;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Upgrade \$http_upgrade;
         client_max_body_size 50m;
     }
 }
 EOF
 
-sudo ln -sf /etc/nginx/sites-available/reverse-proxy /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl restart nginx
+    sudo ln -sf /etc/nginx/sites-available/reverse-proxy /etc/nginx/sites-enabled/
+    sudo nginx -t && sudo systemctl restart nginx
 
-# 8. 申请证书
-echo "[8/8] 申请 HTTPS 证书..."
-sudo certbot --nginx -d "$DOMAIN"
+    echo "[7/8] 申请 HTTPS 证书..."
+    sudo certbot --nginx -d "$DOMAIN"
 
-echo "========================================="
-echo "安装完成！"
-echo "访问地址: https://$DOMAIN"
-echo "常用命令："
-echo "  systemctl --user status cliproxyapi"
-echo "  nano ~/ai-infra/CLIProxyAPIPlus/config.yaml"
-echo "========================================="
+    echo "🎉 安装完成！访问地址: https://$DOMAIN"
+
+# ====================== 2. 修改域名 ======================
+elif [ "$CHOICE" = "2" ]; then
+    read -p "请输入新域名: " NEW_DOMAIN
+    [ -z "$NEW_DOMAIN" ] && { echo "域名不能为空！"; exit 1; }
+
+    sudo sed -i "s/server_name .*/server_name $NEW_DOMAIN;/" /etc/nginx/sites-available/reverse-proxy
+    sudo nginx -t && sudo systemctl restart nginx
+    sudo certbot --nginx -d "$NEW_DOMAIN" --force-renewal
+    echo "✅ 域名修改完成！新地址: https://$NEW_DOMAIN"
+
+# ====================== 3. 完全卸载 ======================
+elif [ "$CHOICE" = "3" ]; then
+    echo "1) 彻底卸载（删除所有数据）"
+    echo "2) 卸载但保留数据（保留 config.yaml）"
+    read -p "请选择 (1/2): " UNINSTALL_MODE
+
+    [ "$UNINSTALL_MODE" = "1" ] && cleanup_full || cleanup_keep_data
+    echo "✅ 卸载完成！"
+else
+    echo "❌ 无效选项！"
+    exit 1
+fi
+EOF
