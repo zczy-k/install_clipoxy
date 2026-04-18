@@ -1,0 +1,2 @@
+# install_clipoxy
+debian11 install_clipoxy CLIProxyAPIPlus
