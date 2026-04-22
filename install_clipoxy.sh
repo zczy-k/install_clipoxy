@@ -75,7 +75,7 @@ if [ "$CHOICE" = "1" ]; then
         cd CLIProxyAPIPlus && git pull
     else
         rm -rf CLIProxyAPIPlus
-        git clone https://github.com/router-for-me/CLIProxyAPIPlus.git
+        git clone https://github.com/zczy-k/CLIProxyAPIPlus.git
         cd CLIProxyAPIPlus
     fi
 
